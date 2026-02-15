@@ -8,6 +8,7 @@ import {
   GridToolbarQuickFilter,
 } from "@mui/x-data-grid";
 import { getDevicesStatus } from "../../../../api/devices";
+import { getDashboardSummary } from "../../../../api/dashboard";
 
 const MyDataTableToolbar = () => {
   return (
@@ -57,6 +58,9 @@ const TabSection = ({ filters, refreshTick }) => {
   const [rows, setRows] = useState([]);
   const [isDevicesLoading, setIsDevicesLoading] = useState(true);
   const [devicesError, setDevicesError] = useState("");
+  const [zoneSummary, setZoneSummary] = useState({ zone_wise_indicators: {} });
+  const [isZoneSummaryLoading, setIsZoneSummaryLoading] = useState(false);
+  const [zoneSummaryError, setZoneSummaryError] = useState("");
 
   useEffect(() => {
     if (activeTab !== 0) {
@@ -108,6 +112,45 @@ const TabSection = ({ filters, refreshTick }) => {
 
     return () => abortController.abort();
   }, [activeTab, filters?.facility, filters?.zoneCode, refreshTick]);
+
+  useEffect(() => {
+    if (activeTab !== 1) {
+      return undefined;
+    }
+
+    const abortController = new AbortController();
+
+    const loadZoneSummary = async () => {
+      try {
+        setIsZoneSummaryLoading(true);
+        setZoneSummaryError("");
+
+        const data = await getDashboardSummary({
+          date: filters?.date || undefined,
+          facility: filters?.facility || undefined,
+          zoneCode: filters?.zoneCode || undefined,
+          signal: abortController.signal,
+        });
+
+        setZoneSummary({
+          zone_wise_indicators: {},
+          ...(data || {}),
+        });
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setZoneSummaryError("Unable to load zone performance");
+        }
+      } finally {
+        setIsZoneSummaryLoading(false);
+      }
+    };
+
+    loadZoneSummary();
+
+    return () => abortController.abort();
+  }, [activeTab, filters?.date, filters?.facility, filters?.zoneCode, refreshTick]);
+
+  const zoneIndicators = Object.entries(zoneSummary?.zone_wise_indicators || {});
 
   const columns = [
     { field: "deviceCode", headerName: "Device Code", flex: 1, minWidth: 150 },
@@ -290,20 +333,64 @@ const TabSection = ({ filters, refreshTick }) => {
         {/* 2. Zone Performance (As it was) */}
         {activeTab === 1 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-2xl border backdrop-blur-md bg-panel-light dark:bg-panel-dark border-border-light dark:border-border-dark">
-            <div className="p-4 border border-border-light dark:border-border-dark rounded-xl bg-white/5">
-              <h3 className="text-sm font-bold mb-2">Zone B1 Efficiency</h3>
-              <div className="w-full bg-gray-200 dark:bg-white/10 h-2 rounded-full overflow-hidden">
-                <div className="bg-green-500 h-full w-[85%]"></div>
+            {zoneSummaryError && (
+              <div className="md:col-span-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                {zoneSummaryError}
               </div>
-              <p className="text-[10px] mt-2 opacity-60">85% Occupancy Rate</p>
-            </div>
-            <div className="p-4 border border-border-light dark:border-border-dark rounded-xl bg-white/5">
-              <h3 className="text-sm font-bold mb-2">Zone VIP Revenue</h3>
-              <div className="w-full bg-gray-200 dark:bg-white/10 h-2 rounded-full overflow-hidden">
-                <div className="bg-indigo-500 h-full w-[60%]"></div>
+            )}
+
+            {!zoneSummaryError && isZoneSummaryLoading && (
+              <div className="md:col-span-2 text-xs opacity-60 text-gray-600 dark:text-white/60">
+                Loading zone performance...
               </div>
-              <p className="text-[10px] mt-2 opacity-60">60% vs Target</p>
-            </div>
+            )}
+
+            {!zoneSummaryError && !isZoneSummaryLoading && zoneIndicators.length === 0 && (
+              <div className="md:col-span-2 text-xs opacity-60 text-gray-600 dark:text-white/60">
+                No zone performance data available for current filters.
+              </div>
+            )}
+
+            {!zoneSummaryError &&
+              !isZoneSummaryLoading &&
+              zoneIndicators.map(([zoneCode, indicator]) => {
+                const eventCount = Number(indicator?.total_parking_events ?? 0);
+                const occupancyCount = Number(indicator?.current_occupancy_count ?? 0);
+                const activeDevices = Number(indicator?.active_devices_count ?? 0);
+                const alerts = Number(indicator?.alerts_triggered_count ?? 0);
+                const targetParkingEvents = indicator?.target_parking_events;
+                const efficiency = indicator?.efficiency;
+                const efficiencyValue = Number(efficiency ?? 0);
+                const hasEfficiency = efficiency !== null && !Number.isNaN(efficiencyValue);
+                const progressWidth = hasEfficiency
+                  ? Math.max(0, Math.min(100, efficiencyValue))
+                  : 0;
+
+                return (
+                  <div
+                    key={zoneCode}
+                    className="p-4 border border-border-light dark:border-border-dark rounded-xl bg-white/5"
+                  >
+                    <h3 className="text-sm font-bold mb-2">Zone {zoneCode} Performance</h3>
+                    <div className="w-full bg-gray-200 dark:bg-white/10 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-green-500 h-full transition-all duration-300"
+                        style={{ width: `${progressWidth}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-[10px] mt-2 opacity-60">
+                      Events {eventCount} • Occupancy {occupancyCount}
+                    </p>
+                    <p className="text-[10px] mt-1 opacity-60">
+                      Active Devices {activeDevices} • Alerts {alerts}
+                    </p>
+                    <p className="text-[10px] mt-1 opacity-60">
+                      Target {targetParkingEvents ?? "N/A"} • Efficiency{" "}
+                      {hasEfficiency ? `${efficiencyValue.toFixed(1)}%` : "N/A"}
+                    </p>
+                  </div>
+                );
+              })}
           </div>
         )}
 
