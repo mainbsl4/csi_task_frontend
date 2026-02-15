@@ -9,6 +9,7 @@ import {
 } from "@mui/x-data-grid";
 import { getDevicesStatus } from "../../../../api/devices";
 import { getDashboardSummary } from "../../../../api/dashboard";
+import { acknowledgeAlert, getAlerts } from "../../../../api/alerts";
 
 const MyDataTableToolbar = () => {
   return (
@@ -53,6 +54,19 @@ const formatLastSeen = (value) => {
   return date.toLocaleString();
 };
 
+const formatTimestamp = (value) => {
+  if (!value) {
+    return "N/A";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "N/A";
+  }
+
+  return date.toLocaleString();
+};
+
 const TabSection = ({ filters, refreshTick }) => {
   const [activeTab, setActiveTab] = useState(0);
   const [rows, setRows] = useState([]);
@@ -61,6 +75,12 @@ const TabSection = ({ filters, refreshTick }) => {
   const [zoneSummary, setZoneSummary] = useState({ zone_wise_indicators: {} });
   const [isZoneSummaryLoading, setIsZoneSummaryLoading] = useState(false);
   const [zoneSummaryError, setZoneSummaryError] = useState("");
+  const [alerts, setAlerts] = useState([]);
+  const [isAlertsLoading, setIsAlertsLoading] = useState(false);
+  const [alertsError, setAlertsError] = useState("");
+  const [selectedAlertStatus, setSelectedAlertStatus] = useState("ACTIVE");
+  const [selectedAlertSeverity, setSelectedAlertSeverity] = useState("ALL");
+  const [acknowledgingAlertIds, setAcknowledgingAlertIds] = useState({});
 
   useEffect(() => {
     if (activeTab !== 0) {
@@ -149,6 +169,79 @@ const TabSection = ({ filters, refreshTick }) => {
 
     return () => abortController.abort();
   }, [activeTab, filters?.date, filters?.facility, filters?.zoneCode, refreshTick]);
+
+  useEffect(() => {
+    if (activeTab !== 2) {
+      return undefined;
+    }
+
+    const abortController = new AbortController();
+
+    const loadAlerts = async () => {
+      try {
+        setIsAlertsLoading(true);
+        setAlertsError("");
+
+        const data = await getAlerts({
+          status: selectedAlertStatus === "ALL" ? undefined : selectedAlertStatus,
+          severity:
+            selectedAlertSeverity === "ALL" ? undefined : selectedAlertSeverity,
+          signal: abortController.signal,
+        });
+
+        const allAlerts = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.results)
+            ? data.results
+            : data && typeof data === "object"
+              ? [data]
+              : [];
+
+        setAlerts(allAlerts);
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setAlertsError("Unable to load alerts");
+        }
+      } finally {
+        setIsAlertsLoading(false);
+      }
+    };
+
+    loadAlerts();
+
+    return () => abortController.abort();
+  }, [activeTab, refreshTick, selectedAlertStatus, selectedAlertSeverity]);
+
+  const handleAcknowledgeAlert = async (alertId) => {
+    try {
+      setAcknowledgingAlertIds((prevState) => ({
+        ...prevState,
+        [alertId]: true,
+      }));
+
+      await acknowledgeAlert({ alertId });
+      if (selectedAlertStatus === "ACTIVE") {
+        setAlerts((prevAlerts) =>
+          prevAlerts.filter((alert) => alert.id !== alertId),
+        );
+      } else {
+        setAlerts((prevAlerts) =>
+          prevAlerts.map((alert) =>
+            alert.id === alertId
+              ? { ...alert, status: "ACKNOWLEDGED" }
+              : alert,
+          ),
+        );
+      }
+    } catch {
+      setAlertsError("Failed to acknowledge alert");
+    } finally {
+      setAcknowledgingAlertIds((prevState) => ({
+        ...prevState,
+        [alertId]: false,
+      }));
+    }
+  };
 
   const zoneIndicators = Object.entries(zoneSummary?.zone_wise_indicators || {});
 
@@ -397,48 +490,123 @@ const TabSection = ({ filters, refreshTick }) => {
         {/* 3. Alert Panel (As it was) */}
         {activeTab === 2 && (
           <div className="space-y-3">
-            {[
-              {
-                type: "CRITICAL",
-                msg: "Device offline > 2 min",
-                device: "PARK-VIP-S002",
-                time: "10:39:20",
-              },
-              {
-                type: "WARNING",
-                msg: "Battery low < 15%",
-                device: "PARK-B2-S011",
-                time: "11:05:45",
-              },
-            ].map((alert, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between p-4 rounded-xl border backdrop-blur-md bg-panel-light dark:bg-panel-dark border-border-light dark:border-border-dark shadow-lg"
-              >
-                <div className="flex items-center gap-4">
-                  <span
-                    className={`px-2 py-1 text-[10px] font-black rounded border ${
-                      alert.type === "CRITICAL"
-                        ? "bg-red-500/20 text-red-500 border-red-500/20"
-                        : "bg-yellow-500/20 text-yellow-500 border-yellow-500/20"
-                    }`}
-                  >
-                    {alert.type}
-                  </span>
-                  <div>
-                    <div className="font-bold text-sm text-gray-900 dark:text-white">
-                      {alert.msg}
-                    </div>
-                    <div className="text-[10px] opacity-40">
-                      {alert.device} • {alert.time}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-border-light dark:border-border-dark bg-panel-light dark:bg-panel-dark">
+              <div className="text-xs text-gray-600 dark:text-white/60">
+                {selectedAlertStatus === "ACTIVE" ? "Active Alerts" : "Alerts"}:{" "}
+                <span className="font-bold text-gray-900 dark:text-white">
+                  {alerts.length}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label
+                  htmlFor="alertStatus"
+                  className="text-xs opacity-60 text-gray-600 dark:text-white/60"
+                >
+                  Status
+                </label>
+                <select
+                  id="alertStatus"
+                  value={selectedAlertStatus}
+                  onChange={(event) => setSelectedAlertStatus(event.target.value)}
+                  className="p-2 text-xs border outline-none rounded-lg transition-all
+                             bg-panel-light dark:bg-panel-dark 
+                             border-border-light dark:border-border-dark 
+                             text-gray-900 dark:text-white/90"
+                >
+                  <option value="ACTIVE">Active</option>
+                  <option value="ACKNOWLEDGED">Acknowledged</option>
+                  <option value="RESOLVED">Resolved</option>
+                  <option value="ALL">All</option>
+                </select>
+
+                <label
+                  htmlFor="alertSeverity"
+                  className="text-xs opacity-60 text-gray-600 dark:text-white/60"
+                >
+                  Severity
+                </label>
+                <select
+                  id="alertSeverity"
+                  value={selectedAlertSeverity}
+                  onChange={(event) => setSelectedAlertSeverity(event.target.value)}
+                  className="p-2 text-xs border outline-none rounded-lg transition-all
+                             bg-panel-light dark:bg-panel-dark 
+                             border-border-light dark:border-border-dark 
+                             text-gray-900 dark:text-white/90"
+                >
+                  <option value="ALL">All</option>
+                  <option value="CRITICAL">Critical</option>
+                  <option value="WARNING">Warning</option>
+                  <option value="INFO">Info</option>
+                </select>
+              </div>
+            </div>
+
+            {alertsError && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                {alertsError}
+              </div>
+            )}
+
+            {!alertsError && isAlertsLoading && (
+              <div className="text-xs opacity-60 text-gray-600 dark:text-white/60">
+                Loading alerts...
+              </div>
+            )}
+
+            {!alertsError && !isAlertsLoading && alerts.length === 0 && (
+              <div className="text-xs opacity-60 text-gray-600 dark:text-white/60">
+                No matching alerts found.
+              </div>
+            )}
+
+            {!alertsError &&
+              !isAlertsLoading &&
+              alerts.map((alert) => (
+                <div
+                  key={alert.id}
+                  className="flex items-center justify-between p-4 rounded-xl border backdrop-blur-md bg-panel-light dark:bg-panel-dark border-border-light dark:border-border-dark shadow-lg"
+                >
+                  <div className="flex items-center gap-4">
+                    <span
+                      className={`px-2 py-1 text-[10px] font-black rounded border ${
+                        alert.severity === "CRITICAL"
+                          ? "bg-red-500/20 text-red-500 border-red-500/20"
+                          : alert.severity === "WARNING"
+                            ? "bg-yellow-500/20 text-yellow-500 border-yellow-500/20"
+                            : "bg-indigo-500/20 text-indigo-500 border-indigo-500/20"
+                      }`}
+                    >
+                      {alert.severity}
+                    </span>
+                    <div>
+                      <div className="font-bold text-sm text-gray-900 dark:text-white">
+                        {alert.message}
+                      </div>
+                      <div className="text-[10px] opacity-40">
+                        {alert.device_code} • {alert.alert_type} • {alert.status}
+                      </div>
+                      <div className="text-[10px] opacity-40">
+                        Last Triggered: {formatTimestamp(alert.last_triggered_at)}
+                      </div>
                     </div>
                   </div>
+                  <button
+                    className="btn btn-xs btn-outline border-border-light dark:border-border-dark text-[10px]"
+                    disabled={
+                      Boolean(acknowledgingAlertIds[alert.id]) ||
+                      alert.status !== "ACTIVE"
+                    }
+                    onClick={() => handleAcknowledgeAlert(alert.id)}
+                  >
+                    {alert.status !== "ACTIVE"
+                      ? alert.status
+                      : acknowledgingAlertIds[alert.id]
+                      ? "Acknowledging..."
+                      : "Acknowledge"}
+                  </button>
                 </div>
-                <button className="btn btn-xs btn-outline border-border-light dark:border-border-dark text-[10px]">
-                  Acknowledge
-                </button>
-              </div>
-            ))}
+              ))}
           </div>
         )}
 
