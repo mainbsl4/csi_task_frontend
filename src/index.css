@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+@theme {
+  --color-bg-dark: #0b1220;
+  --color-bg-light: #f6f7fb;
+  --color-panel-dark: rgba(255, 255, 255, 0.05);
+  --color-panel-light: #ffffff;
+  --color-border-dark: rgba(255, 255, 255, 0.1);
+  --color-border-light: rgba(20, 22, 31, 0.1);
+}
+
+@layer components {
+  .my-card {
+    @apply border rounded-2xl shadow-2xl transition-all duration-300;
+  }
+  
+  :font-variant(dark) .my-card {
+    @apply bg-[var(--color-panel-dark)] border-[var(--color-border-dark)];
+  }
+
+  .dark .my-card {
+    background-color: var(--color-panel-dark);
+    border-color: var(--color-border-dark);
+  }
+
+  .light .my-card {
+    background-color: var(--color-panel-light);
+    border-color: var(--color-border-light);
+    @apply shadow-md;
+  }
+}
