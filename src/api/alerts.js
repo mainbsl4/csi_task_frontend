@@ -3,13 +3,13 @@ import { buildApiUrl } from "./config";
 export const getAlerts = async ({ status, severity, signal } = {}) => {
   const queryParams = new URLSearchParams();
 
-  // if (status) {
-  //   queryParams.set("status", status);
-  // }
+  if (status) {
+    queryParams.set("status", status);
+  }
 
-  // if (severity) {
-  //   queryParams.set("severity", severity);
-  // }
+  if (severity) {
+    queryParams.set("severity", severity);
+  }
 
   const queryString = queryParams.toString();
   const url = queryString

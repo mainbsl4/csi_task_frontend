@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   DataGrid,
   GridToolbarContainer,
@@ -10,6 +10,8 @@ import {
 import { getDevicesStatus } from "../../../../api/devices";
 import { getDashboardSummary } from "../../../../api/dashboard";
 import { acknowledgeAlert, getAlerts } from "../../../../api/alerts";
+import { getHourlyUsage } from "../../../../api/metrics";
+import { Chart } from "chart.js/auto";
 
 const MyDataTableToolbar = () => {
   return (
@@ -67,6 +69,19 @@ const formatTimestamp = (value) => {
   return date.toLocaleString();
 };
 
+const formatHourLabel = (value) => {
+  if (!value) {
+    return "--";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
 const TabSection = ({ filters, refreshTick }) => {
   const [activeTab, setActiveTab] = useState(0);
   const [rows, setRows] = useState([]);
@@ -81,6 +96,12 @@ const TabSection = ({ filters, refreshTick }) => {
   const [selectedAlertStatus, setSelectedAlertStatus] = useState("ACTIVE");
   const [selectedAlertSeverity, setSelectedAlertSeverity] = useState("ALL");
   const [acknowledgingAlertIds, setAcknowledgingAlertIds] = useState({});
+  const [hourlyUsage, setHourlyUsage] = useState([]);
+  const [hourlyTarget, setHourlyTarget] = useState(null);
+  const [isHourlyUsageLoading, setIsHourlyUsageLoading] = useState(false);
+  const [hourlyUsageError, setHourlyUsageError] = useState("");
+  const lineChartCanvasRef = useRef(null);
+  const lineChartInstanceRef = useRef(null);
 
   useEffect(() => {
     if (activeTab !== 0) {
@@ -212,6 +233,80 @@ const TabSection = ({ filters, refreshTick }) => {
     return () => abortController.abort();
   }, [activeTab, refreshTick, selectedAlertStatus, selectedAlertSeverity]);
 
+  useEffect(() => {
+    if (activeTab !== 3) {
+      return undefined;
+    }
+
+    const abortController = new AbortController();
+
+    const loadHourlyChart = async () => {
+      try {
+        setIsHourlyUsageLoading(true);
+        setHourlyUsageError("");
+
+        const [hourlyData, summaryData] = await Promise.all([
+          getHourlyUsage({
+            date: filters?.date || undefined,
+            facilityId: filters?.facility || undefined,
+            zoneCode: filters?.zoneCode || undefined,
+            signal: abortController.signal,
+          }),
+          getDashboardSummary({
+            date: filters?.date || undefined,
+            facility: filters?.facility || undefined,
+            zoneCode: filters?.zoneCode || undefined,
+            signal: abortController.signal,
+          }),
+        ]);
+
+        const hourlyRows = Array.isArray(hourlyData?.hourly)
+          ? hourlyData.hourly
+          : Array.isArray(hourlyData)
+            ? hourlyData
+            : [];
+
+        const mappedRows = hourlyRows.map((item, index) => ({
+          id: `${item.hour || "hour"}-${index}`,
+          hour: item.hour,
+          hourLabel: formatHourLabel(item.hour),
+          totalEvents: Number(item.total_events ?? 0),
+          occupiedEvents: Number(item.occupied_events ?? 0),
+        }));
+
+        setHourlyUsage(mappedRows);
+
+        const zoneTarget = filters?.zoneCode
+          ? summaryData?.zone_wise_indicators?.[filters.zoneCode]
+              ?.target_parking_events
+          : null;
+
+        const dailyTarget = zoneTarget ?? summaryData?.target_parking_events;
+        const parsedDailyTarget = Number(dailyTarget);
+
+        if (
+          dailyTarget !== null &&
+          dailyTarget !== undefined &&
+          !Number.isNaN(parsedDailyTarget)
+        ) {
+          setHourlyTarget(parsedDailyTarget / 24);
+        } else {
+          setHourlyTarget(null);
+        }
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setHourlyUsageError("Unable to load hourly usage");
+        }
+      } finally {
+        setIsHourlyUsageLoading(false);
+      }
+    };
+
+    loadHourlyChart();
+
+    return () => abortController.abort();
+  }, [activeTab, filters?.date, filters?.facility, filters?.zoneCode, refreshTick]);
+
   const handleAcknowledgeAlert = async (alertId) => {
     try {
       setAcknowledgingAlertIds((prevState) => ({
@@ -244,6 +339,96 @@ const TabSection = ({ filters, refreshTick }) => {
   };
 
   const zoneIndicators = Object.entries(zoneSummary?.zone_wise_indicators || {});
+  const chartMaxValue = Math.max(
+    1,
+    ...hourlyUsage.map((item) => item.totalEvents),
+    hourlyTarget || 0,
+  );
+  const hasHourlyTarget = hourlyTarget !== null;
+  const hourlyTargetPercent = hasHourlyTarget
+    ? Math.max(0, Math.min(100, (hourlyTarget / chartMaxValue) * 100))
+    : 0;
+
+  useEffect(() => {
+    if (activeTab !== 3) {
+      return undefined;
+    }
+
+    if (lineChartInstanceRef.current) {
+      lineChartInstanceRef.current.destroy();
+      lineChartInstanceRef.current = null;
+    }
+
+    if (!lineChartCanvasRef.current || hourlyUsage.length === 0) {
+      return undefined;
+    }
+
+    const labels = hourlyUsage.map((item) => item.hourLabel);
+    const actualSeries = hourlyUsage.map((item) => item.totalEvents);
+    const targetSeries = hasHourlyTarget
+      ? labels.map(() => Number(hourlyTarget.toFixed(2)))
+      : [];
+
+    lineChartInstanceRef.current = new Chart(lineChartCanvasRef.current, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Actual Events",
+            data: actualSeries,
+            borderColor: "rgba(99, 102, 241, 1)",
+            backgroundColor: "rgba(99, 102, 241, 0.18)",
+            borderWidth: 2,
+            pointRadius: 3,
+            tension: 0.3,
+            fill: true,
+          },
+          ...(hasHourlyTarget
+            ? [
+                {
+                  label: "Hourly Target",
+                  data: targetSeries,
+                  borderColor: "rgba(248, 113, 113, 1)",
+                  borderWidth: 2,
+                  borderDash: [6, 4],
+                  pointRadius: 0,
+                  tension: 0,
+                  fill: false,
+                },
+              ]
+            : []),
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            labels: { color: "rgba(255,255,255,0.85)" },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: "rgba(255,255,255,0.65)" },
+            grid: { color: "rgba(255,255,255,0.08)" },
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: "rgba(255,255,255,0.65)" },
+            grid: { color: "rgba(255,255,255,0.08)" },
+          },
+        },
+      },
+    });
+
+    return () => {
+      if (lineChartInstanceRef.current) {
+        lineChartInstanceRef.current.destroy();
+        lineChartInstanceRef.current = null;
+      }
+    };
+  }, [activeTab, hourlyUsage, hasHourlyTarget, hourlyTarget]);
 
   const columns = [
     { field: "deviceCode", headerName: "Device Code", flex: 1, minWidth: 150 },
@@ -614,19 +799,78 @@ const TabSection = ({ filters, refreshTick }) => {
         {activeTab === 3 && (
           <div className="p-6 rounded-2xl border backdrop-blur-md bg-panel-light dark:bg-panel-dark border-border-light dark:border-border-dark">
             <h2 className="font-bold mb-6">Hourly Usage vs Target</h2>
-            <div className="flex items-end gap-2 h-40 px-2 border-b border-dashed border-border-light dark:border-border-dark">
-              {[70, 45, 90, 65, 80, 30, 55].map((h, i) => (
-                <div
-                  key={i}
-                  className="flex-1 flex flex-col justify-end gap-1 group"
-                >
-                  <div
-                    className="w-full bg-indigo-500/40 group-hover:bg-indigo-500 rounded-t-sm transition-all"
-                    style={{ height: `${h}%` }}
-                  ></div>
+
+            {hourlyUsageError && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400 mb-4">
+                {hourlyUsageError}
+              </div>
+            )}
+
+            {!hourlyUsageError && isHourlyUsageLoading && (
+              <div className="text-xs opacity-60 text-gray-600 dark:text-white/60 mb-4">
+                Loading hourly usage...
+              </div>
+            )}
+
+            {!hourlyUsageError && !isHourlyUsageLoading && hourlyUsage.length === 0 && (
+              <div className="text-xs opacity-60 text-gray-600 dark:text-white/60 mb-4">
+                No hourly usage data found.
+              </div>
+            )}
+
+            {!hourlyUsageError && !isHourlyUsageLoading && hourlyUsage.length > 0 && (
+              <>
+                <div className="flex items-center justify-between text-[10px] opacity-70 mb-3">
+                  <span>
+                    Hourly Target: {hasHourlyTarget ? hourlyTarget.toFixed(2) : "N/A"}
+                  </span>
+                  <span>Bars = total_events</span>
                 </div>
-              ))}
-            </div>
+
+                <div className="relative h-44 px-2 border-b border-dashed border-border-light dark:border-border-dark">
+                  {hasHourlyTarget && (
+                    <div
+                      className="absolute left-2 right-2 border-t border-red-400/80 border-dashed"
+                      style={{ bottom: `${hourlyTargetPercent}%` }}
+                    >
+                      <span className="absolute -top-4 right-0 text-[10px] text-red-500 dark:text-red-400">
+                        Target {hourlyTarget.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="h-full flex items-end gap-2">
+                    {hourlyUsage.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex-1 min-w-[28px] flex flex-col justify-end gap-1 group"
+                        title={`${item.hourLabel} • Events ${item.totalEvents}`}
+                      >
+                        <div
+                          className="w-full bg-indigo-500/40 group-hover:bg-indigo-500 rounded-t-sm transition-all"
+                          style={{
+                            height: `${Math.max(
+                              2,
+                              (item.totalEvents / chartMaxValue) * 100,
+                            )}%`,
+                          }}
+                        ></div>
+                        <div className="text-[10px] text-center opacity-60">
+                          {item.hourLabel}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-6 h-72 rounded-xl border border-border-light dark:border-border-dark p-3 bg-white/5">
+                  <h3 className="text-xs font-bold mb-3 text-gray-900 dark:text-white/90">
+                    Hourly Events Trend (Chart.js)
+                  </h3>
+                  <canvas ref={lineChartCanvasRef}></canvas>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
