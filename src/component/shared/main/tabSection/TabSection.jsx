@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   DataGrid,
   GridToolbarContainer,
@@ -7,6 +7,7 @@ import {
   GridToolbarExport,
   GridToolbarQuickFilter,
 } from "@mui/x-data-grid";
+import { getDevicesStatus } from "../../../../api/devices";
 
 const MyDataTableToolbar = () => {
   return (
@@ -38,69 +39,95 @@ const MyDataTableToolbar = () => {
   );
 };
 
-const TabSection = () => {
-  const [activeTab, setActiveTab] = useState(0);
+const formatLastSeen = (value) => {
+  if (!value) {
+    return "N/A";
+  }
 
-  const rows = [
-    {
-      id: 1,
-      deviceCode: "PARK-B1-S005",
-      zone: "B1",
-      slot: "S005",
-      lastSeen: "10:45:12",
-      status: "OK",
-      health: 92,
-    },
-    {
-      id: 2,
-      deviceCode: "PARK-VIP-S002",
-      zone: "VIP",
-      slot: "S002",
-      lastSeen: "10:39:20",
-      status: "OFFLINE",
-      health: 45,
-    },
-    {
-      id: 3,
-      deviceCode: "PARK-B2-S011",
-      zone: "B2",
-      slot: "S011",
-      lastSeen: "11:05:45",
-      status: "OK",
-      health: 88,
-    },
-    {
-      id: 4,
-      deviceCode: "PARK-A1-S020",
-      zone: "A1",
-      slot: "S020",
-      lastSeen: "11:10:05",
-      status: "OK",
-      health: 95,
-    },
-    {
-      id: 5,
-      deviceCode: "PARK-B1-S009",
-      zone: "B1",
-      slot: "S009",
-      lastSeen: "11:12:30",
-      status: "WARNING",
-      health: 62,
-    },
-  ];
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "N/A";
+  }
+
+  return date.toLocaleString();
+};
+
+const TabSection = ({ filters, refreshTick }) => {
+  const [activeTab, setActiveTab] = useState(0);
+  const [rows, setRows] = useState([]);
+  const [isDevicesLoading, setIsDevicesLoading] = useState(true);
+  const [devicesError, setDevicesError] = useState("");
+
+  useEffect(() => {
+    if (activeTab !== 0) {
+      return undefined;
+    }
+
+    const abortController = new AbortController();
+
+    const loadDevices = async () => {
+      try {
+        setIsDevicesLoading(true);
+        setDevicesError("");
+
+        const data = await getDevicesStatus({
+          facility: filters?.facility || undefined,
+          zoneCode: filters?.zoneCode || undefined,
+          signal: abortController.signal,
+        });
+
+        const devices = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.results)
+            ? data.results
+            : [];
+
+        const mappedRows = devices.map((device, index) => ({
+          id: device.device_code || `${device.zone_code || "zone"}-${index}`,
+          deviceCode: device.device_code || "N/A",
+          zone: device.zone_code || "N/A",
+          facility: device.facility || "N/A",
+          isActive: device.is_active ? "Yes" : "No",
+          lastSeen: formatLastSeen(device.last_seen),
+          status: device.status || "UNKNOWN",
+          health: Number(device.health_score ?? 0),
+          activeAlerts: Number(device.active_alerts ?? 0),
+        }));
+
+        setRows(mappedRows);
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          setDevicesError("Unable to load live monitoring devices");
+        }
+      } finally {
+        setIsDevicesLoading(false);
+      }
+    };
+
+    loadDevices();
+
+    return () => abortController.abort();
+  }, [activeTab, filters?.facility, filters?.zoneCode, refreshTick]);
 
   const columns = [
     { field: "deviceCode", headerName: "Device Code", flex: 1, minWidth: 150 },
     { field: "zone", headerName: "Zone", width: 100 },
-    { field: "slot", headerName: "Slot", width: 100 },
-    { field: "lastSeen", headerName: "Last Seen", width: 130 },
+    { field: "facility", headerName: "Facility", flex: 1, minWidth: 180 },
+    { field: "isActive", headerName: "Active", width: 90 },
+    { field: "lastSeen", headerName: "Last Seen", minWidth: 180, flex: 1 },
     {
       field: "status",
       headerName: "Status",
       width: 120,
       renderCell: (params) => {
         const status = params.value;
-        let colorClass = "bg-green-500/10 text-green-500 border-green-500/20";
+        let colorClass =
+          "bg-gray-500/10 text-gray-500 border-gray-500/20";
+
+        if (status === "OK" || status === "ONLINE") {
+          colorClass = "bg-green-500/10 text-green-500 border-green-500/20";
+        }
+
         if (status === "OFFLINE")
           colorClass = "bg-red-500/10 text-red-500 border-red-500/20";
         if (status === "WARNING")
@@ -122,6 +149,7 @@ const TabSection = () => {
         <span className="font-bold text-indigo-500">{params.value}%</span>
       ),
     },
+    { field: "activeAlerts", headerName: "Alerts", width: 90 },
   ];
 
   const tabs = [
@@ -155,10 +183,17 @@ const TabSection = () => {
       <div className="min-h-[500px]">
         {activeTab === 0 && (
           <div className="rounded-2xl border shadow-2xl backdrop-blur-md bg-panel-light dark:bg-panel-dark border-border-light dark:border-border-dark overflow-hidden transition-all duration-500">
+            {devicesError && (
+              <div className="mx-4 mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                {devicesError}
+              </div>
+            )}
+
             <div style={{ height: 500, width: "100%" }}>
               <DataGrid
                 rows={rows}
                 columns={columns}
+                loading={isDevicesLoading}
                 slots={{ toolbar: MyDataTableToolbar }}
                 initialState={{
                   pagination: { paginationModel: { pageSize: 5 } },

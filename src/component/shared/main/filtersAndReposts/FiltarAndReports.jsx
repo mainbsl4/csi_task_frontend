@@ -1,7 +1,7 @@
 import FiltarReportsHeader from "./FiltarReportsHeader";
 import FiltarsInpus from "./FiltarsInpus";
 
-const FiltarAndReports = () => {
+const FiltarAndReports = ({ filters, onFiltersChange, onRefresh }) => {
   return (
     <section
       className="p-5 rounded-2xl border transition-all duration-500
@@ -11,12 +11,12 @@ const FiltarAndReports = () => {
                  
                  light:bg-white/70 light:border-black/5 light:shadow-gray-200/50"
     >
-      <FiltarReportsHeader />
+      <FiltarReportsHeader onRefresh={onRefresh} />
 
       <div className="h-px w-full bg-gradient-to-r from-transparent via-white/10 to-transparent my-4"></div>
 
       <div className="mt-2">
-        <FiltarsInpus />
+        <FiltarsInpus filters={filters} onFiltersChange={onFiltersChange} />
       </div>
     </section>
   );
