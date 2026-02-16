@@ -1,16 +1,67 @@
-# React + Vite
+# CSI Task Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Frontend application for the CSI dashboard, built with React and Vite.
 
-Currently, two official plugins are available:
+## Project Guidelines
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 1. Prerequisites
+- Node.js 18+
+- npm 9+
 
-## React Compiler
+## 2. Setup
+1. Install dependencies:
+```bash
+npm install
+```
+2. Create environment file (if needed):
+```bash
+cp .env.example .env
+```
+3. Start development server:
+```bash
+npm run dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 3. Available Scripts
+- `npm run dev` - run app in development mode
+- `npm run build` - create production build
+- `npm run preview` - preview production build locally
+- `npm run lint` - run ESLint checks
 
-## Expanding the ESLint configuration
+## 4. Project Structure
+- `src/main.jsx` - app bootstrap
+- `src/App.jsx` - root app wrapper
+- `src/component/` - UI components
+- `src/api/` - API/data modules for dashboard sections
+- `src/index.css` - global styles
+- `public/` - static assets
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 5. Development Standards
+- Keep components small and focused on one responsibility.
+- Reuse shared UI from `src/component/shared/` before creating new components.
+- Keep API request/data logic in `src/api/` instead of UI files.
+- Use clear naming for files and components (PascalCase for components).
+- Run `npm run lint` before pushing changes.
+
+## 6. Styling Guidelines
+- Use existing Tailwind and MUI patterns already used in the codebase.
+- Prefer consistency with current spacing, colors, and typography.
+- Avoid inline style duplication; extract repeated styles when practical.
+
+## 7. Environment Variables
+- Keep secrets out of source code.
+- Add new variables to `.env.example` when introducing them.
+
+## 8. Pull Request Checklist
+- Feature/bug fix works locally.
+- Lint passes (`npm run lint`).
+- No unrelated file changes.
+- README/docs updated when behavior or setup changes.
+
+## 9. Build Verification
+Before release:
+```bash
+npm run lint
+npm run build
+npm run preview
+```
